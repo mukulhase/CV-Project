@@ -1,0 +1,6 @@
+[submodule "sources/keras-neural-style"]
+	path = sources/keras-neural-style
+	url = https://github.com/fchollet/keras.git
+[submodule "sources/deep-photo-styletransfer"]
+	path = sources/deep-photo-styletransfer
+	url = https://github.com/luanfujun/deep-photo-styletransfer
