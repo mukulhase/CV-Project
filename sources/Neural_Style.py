@@ -19,8 +19,8 @@ import torchvision.models as models
 
 # cuda
 
-#use_cuda = torch.cuda.is_available()
 use_cuda = False
+#use_cuda = torch.cuda.is_available()
 dtype = torch.cuda.FloatTensor if use_cuda else torch.FloatTensor
 
 # images
@@ -80,6 +80,7 @@ def extract_mask(image, color_mode):
 
 
 color_content_masks, color_style_masks = [], []
+color_content_masks_ori, color_style_masks_ori = [], []
 
 for color_code in color_vals.keys():
     content_mask_j = extract_mask(content_seg, color_code)
@@ -87,6 +88,9 @@ for color_code in color_vals.keys():
 
     color_content_masks.append(float_loader(content_mask_j))
     color_style_masks.append(float_loader(seg_mask_j))
+
+    color_content_masks_ori.append(float_loader(content_mask_j))
+    color_style_masks_ori.append(float_loader(seg_mask_j))
 
 unloader = transforms.ToPILImage()  # reconvert into PIL image
 
@@ -96,7 +100,6 @@ def imshow(tensor):
     image = unloader(image)
     plt.imshow(image)
 
-
 class TVLoss(nn.Module):
     def __init__(self, strength):
         super(TVLoss, self).__init__()
@@ -104,11 +107,13 @@ class TVLoss(nn.Module):
         self.x_diff = torch.Tensor()
         self.y_diff = torch.Tensor()
 
-    def updateOutput(self, input):
+    def forward(self, input):
         self.output = input
         return self.output
 
-    def updateGradInput(self, input, gradOutput):
+    def backward(self, retain_variables=True):
+        input = self.output
+        self.gradInput = torch.Tensor()
         self.gradInput.resize_as_(input).zero_()
         C, H, W = input.size(0), input.size(1), input.size(2)
         self.x_diff.resize_(3, H-1, W-1)
@@ -193,7 +198,7 @@ class StyleLossWithSeg(nn.Module):
         super(StyleLossWithSeg, self).__init__()
         self.strength = strength
         self.target_grams = target_grams
-        self.color_content_masks = color_content_masks
+        self.color_content_masks = color_content_masks_ori
         self.color_codes = color_vals.keys()
 
         self.loss = 0
@@ -201,24 +206,26 @@ class StyleLossWithSeg(nn.Module):
         self.crit = nn.MSELoss()
 
     def forward(self, input):
-        self.output = input
+        self.output = input.clone()
         return self.output
 
-    def backward(self, input, gradOutput):
+    def backward(self, retain_variable=True):
+        input = self.output.clone()
         self.loss = 0
-        self.gradInput = gradOutput.clone().zero_()
+        self.gradInput = None
 
         for j in range(len(self.color_codes)):
+            print j,
             l_content_mask_ori = self.color_content_masks[j].clone()
             l_content_mask = l_content_mask_ori.repeat(1,1,1).expand_as(input)
-            l_content_mean = l_content_mask_ori.mean()
+            l_content_mean = l_content_mask_ori.mean()[0].data[0]
 
             masked_input_features = l_content_mask * input
-            masked_input_gram = self.gram.forward(masked_input_features).clone()
+            masked_input_gram = self.gram.forward(masked_input_features)
             if l_content_mean > 0:
                 masked_input_gram /= input.nelement() * l_content_mean
 
-            loss_j = self.crit.forward(maked_input_gram, self.target_grams[j])
+            loss_j = self.crit.forward(masked_input_gram, self.target_grams[j])
             loss_j *= self.strength * l_content_mean
             self.loss += loss_j
 
@@ -226,11 +233,13 @@ class StyleLossWithSeg(nn.Module):
             dG /= input.nelement()
 
             gradient = self.gram.backward(masked_input_features, dG)
+            if self.gradInput == None:
+                self.gradInput = gradient.clone().zero_()
             self.gradInput.add_(gradient)
 
         self.gradInput.mul_(self.strength)
-        self.gradInput.add_(gradOutput)
-        return self.gradInput
+        self.output = self.gradInput.clone()
+        return self.loss
 
 
 cnn = models.vgg16(pretrained=True).features
@@ -258,6 +267,8 @@ if use_cuda:
 # weigth associated with content and style losses
 content_weight = 1
 style_weight = 1000
+
+model.add_module('tv', TVLoss(1e-3))
 
 i = 1
 for layer in list(cnn):
@@ -316,8 +327,7 @@ for layer in list(cnn):
             color_content_masks[k] = color_content_masks[k][a1::2, a1::2]
             color_style_masks[k] = color_style_masks[k][b1::2, b2::2]
 
-
-print(model)
+print ('model prepared')
 
 # input image
 
@@ -343,6 +353,7 @@ while run[0] <= 300:
         content_score = 0
 
         for sl in style_losses:
+            sl.backward()
             style_score += sl.loss
         for cl in content_losses:
             content_score += cl.backward()
