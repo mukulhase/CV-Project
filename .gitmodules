@@ -4,3 +4,6 @@
 [submodule "sources/deep-photo-styletransfer"]
 	path = sources/deep-photo-styletransfer
 	url = https://github.com/luanfujun/deep-photo-styletransfer
+[submodule "sources/How-to-Generate-Art-Demo"]
+	path = sources/How-to-Generate-Art-Demo
+	url = https://github.com/llSourcell/How-to-Generate-Art-Demo.git
